@@ -34,7 +34,7 @@ class Portfolio:
         self.save_path = 'Data'
         self.port_returns = data.mean(axis=1).dropna()
         self.nifty_returns = pdr.get_data_yahoo('^NSEI', start=self.start_date, end=self.end_date)['Close'].pct_change().dropna()
-        self.beta = np.corrcoef(self.port_returns, self.nifty_returns)[0,1]/(self.port_returns.std()*self.nifty_returns.std())
+        self.beta = np.polyfit(x=self.nifty_returns, y=self.port_returns,deg=1)[0]
         if save:
             os.makedirs(self.save_path, exist_ok=True)
             self.stock_df.to_csv(os.path.join(self.save_path, f'stock_{len(os.listdir(self.save_path))+1}.csv'), index=False)

@@ -29,6 +29,8 @@ class Portfolio:
             'Volatility':volatility
         })
         self.stock_df.reset_index(drop=True, inplace=True)
+        # Annualizing the returns 
+        self.stock_df['Returns'] = self.stock_df['Returns'] * len(self.stock_df)
         self.save_path = 'Data'
         self.port_returns = data.mean(axis=1).dropna()
         self.nifty_returns = pdr.get_data_yahoo('^NSEI', start=self.start_date, end=self.end_date)['Close'].pct_change().dropna()
@@ -55,7 +57,7 @@ class Portfolio:
     def describe(self, rf=0.06):
         portfolio_return = self.stock_df['Returns'].mean()
         portfolio_volatility = self.stock_df['Volatility'].mean()
-        market_returns = self.nifty_returns.mean()
+        market_returns = self.nifty_returns.mean() * len(self.stock_df)
         excess_return = portfolio_return - self.beta*(market_returns-rf)
         sharpe = (portfolio_return - rf)/portfolio_volatility
         treynors = (portfolio_return-rf)/self.beta

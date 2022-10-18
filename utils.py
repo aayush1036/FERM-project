@@ -10,42 +10,69 @@ import yfinance as yf
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.pipeline import Pipeline
+from tabulate import tabulate
 yf.pdr_override()
 
 class Portfolio:
     def __init__(self, stocks, period=1,save=True) -> None:
         self.stock_list = stocks
-        self.period = period 
-        self.end_date = dt.today()
-        self.start_date = self.end_date + relativedelta(years=-self.period)
-        print('Getting data')
+        self.__end_date = dt.today() - relativedelta(days=1)
+        self.__start_date = self.__end_date - relativedelta(years=period)
         self.stock_list = [stock if stock.endswith('.NS') else f'{stock}.NS' for stock in self.stock_list]
-        data = pdr.get_data_yahoo(self.stock_list, start = self.start_date, end=self.end_date, max_retries=1).Close.pct_change()
-        returns = data.mean(axis=0)
-        volatility = data.std(axis=0)
-        self.stock_df = pd.DataFrame({
-            'Symbol': self.stock_list,
-            'Returns':returns,
-            'Volatility':volatility
-        })
-        self.stock_df.reset_index(drop=True, inplace=True)
-        # Annualizing the returns 
-        self.stock_df['Returns'] = self.stock_df['Returns'] * len(self.stock_df)
-        self.save_path = 'Data'
-        self.port_returns = data.mean(axis=1).dropna()
-        self.nifty_returns = pdr.get_data_yahoo('^NSEI', start=self.start_date, end=self.end_date)['Close'].pct_change().dropna()
-        self.beta = np.polyfit(x=self.nifty_returns, y=self.port_returns,deg=1)[0]
+        
+        data = pdr.get_data_yahoo(self.stock_list, start = self.__start_date, end=self.__end_date, max_retries=1)['Close']
+        
+        weightage = 1/len(self.stock_list)
+        returns_list = []
+        
+        for stock in self.stock_list:
+           returns_list.append(data[stock]/data[stock].iloc[0]) 
+        
+        self.returns_df = pd.concat(returns_list, axis=1)
+        self.returns_df.columns =  self.stock_list
+        
+        weighted_returns = (self.returns_df.copy() * weightage).sum(axis=1)        
+        self.returns_df['PortfolioReturns'] = weighted_returns
+               
+        save_path = 'Data'
         if save:
-            os.makedirs(self.save_path, exist_ok=True)
-            self.stock_df.to_csv(os.path.join(self.save_path, f'stock_{len(os.listdir(self.save_path))+1}.csv'), index=False)
+            os.makedirs(save_path, exist_ok=True)
+            data.to_csv(os.path.join(save_path, f'stock_{len(os.listdir(save_path))+1}.csv'), index=False)
+        
+        self.summary_df = pd.DataFrame()
+        stocknames = []
+        returns = []
+        volatility = []
+        for stock in self.stock_list:
+            stocknames.append(stock)
+            returns.append(self.returns_df[stock].mean())
+            volatility.append(self.returns_df[stock].std())
+        self.summary_df['Symbol'] = stocknames
+        self.summary_df['Returns'] = returns 
+        self.summary_df['Volatility'] = volatility
     
+    def __get_nifty_returns(self, mean=True):
+        nifty = pdr.get_data_yahoo('^NSEI', start=self.__start_date, end=self.__end_date, progress=False)['Close']
+        returns = nifty/nifty.iloc[0]
+        if mean:
+            return returns.mean() * len(self.returns_df)  
+        else:
+            return returns
+    
+    def __get_excess_returns(self, rf=0.06):
+        mkt_returns = self.__get_nifty_returns(mean=False)
+        portfolio_returns = self.returns_df['PortfolioReturns']
+        beta = np.polyfit(x=mkt_returns, y=portfolio_returns, deg=1)[0]
+        excess_returns = portfolio_returns.mean() - beta*(mkt_returns.mean() - rf)
+        return beta, excess_returns
+     
     def see_frontier(self):
         _, ax = plt.subplots(figsize=(16,6))
-        ax.scatter(self.stock_df['Volatility'], self.stock_df['Returns'])
-        min_risk_idx = self.stock_df['Volatility'].idxmin()
-        stock_name = self.stock_df.iloc[min_risk_idx, 0]
-        stock_return = self.stock_df.iloc[min_risk_idx, 1]
-        stock_volatility = self.stock_df.iloc[min_risk_idx, 2]
+        ax.scatter(self.summary_df['Volatility'], self.summary_df['Returns'])
+        min_risk_idx = self.summary_df['Volatility'].idxmin()
+        stock_name = self.summary_df.loc[min_risk_idx]['Symbol']
+        stock_return = self.summary_df.loc[min_risk_idx]['Returns']
+        stock_volatility = self.summary_df.loc[min_risk_idx]['Volatility']
         ax.axhline(y=stock_return, ls='--', label=f'Return -> {stock_return:.3%}', color='blue')
         ax.axvline(x=stock_volatility, ls='--', label = f'Volatility -> {stock_volatility:.3%}', color='red')
         ax.set_xlabel('Volatility')
@@ -55,23 +82,28 @@ class Portfolio:
         plt.show()
     
     def describe(self, rf=0.06):
-        portfolio_return = self.stock_df['Returns'].mean()
-        portfolio_volatility = self.stock_df['Volatility'].mean()
-        market_returns = self.nifty_returns.mean() * len(self.stock_df)
-        excess_return = portfolio_return - self.beta*(market_returns-rf)
+        portfolio_return = self.returns_df['PortfolioReturns'].mean() * len(self.returns_df)
+        portfolio_volatility = self.returns_df['PortfolioReturns'].std() * np.sqrt(len(self.returns_df))
+        market_returns = self.__get_nifty_returns()
+        beta, excess_return = self.__get_excess_returns()
         sharpe = (portfolio_return - rf)/portfolio_volatility
-        treynors = (portfolio_return-rf)/self.beta
-        jensens = portfolio_return - (rf + self.beta * (market_returns-rf))
+        sharpe = sharpe * np.sqrt(len(self.returns_df))
+        treynors = (portfolio_return-rf)/beta
+        jensens = portfolio_return - (rf + beta * (market_returns-rf))
         information_ratio = (portfolio_return - rf)/excess_return
-        return {
-            'Sharpe Ratio':sharpe,
-            'Treynors Ratio':treynors,
-            'Jensens Alpha':jensens,
-            'Information Ratio':information_ratio
+        
+        info= {
+            'Sharpe Ratio':[sharpe],
+            'Treynors Ratio':[treynors],
+            'Jensens Alpha':[jensens],
+            'Information Ratio':[information_ratio]
         }
         
+        print(tabulate(info, headers='keys'))
+        return info
+    
     def find_clusters(self):
-        X = self.stock_df[['Returns','Volatility']].values 
+        X = self.summary_df[['Returns','Volatility']].dropna().values 
         scaler = MinMaxScaler()
         X = scaler.fit_transform(X)
         inertia = []
@@ -88,21 +120,22 @@ class Portfolio:
         plt.show()
     
     def cluster(self,k):
-        X = self.stock_df[['Returns','Volatility']].values
+        X = self.summary_df[['Returns','Volatility']].dropna().values
+        self.cluster_df = self.summary_df.dropna().copy()
         pipeline = Pipeline(steps=[
             ('Scaler', MinMaxScaler()),
             ('Clustering', KMeans(n_clusters=k))
         ])
         pipeline.fit(X)
         preds = pipeline.predict(X)
-        self.stock_df['Cluster'] = preds 
+        self.cluster_df['Cluster'] = preds 
         self.clustered = True 
         
     def visualize_clusters(self):
         if not self.clustered:
             raise NotImplementedError('Please cluster your data first')
         _, ax = plt.subplots(figsize=(16,6))
-        sns.scatterplot(data=self.stock_df, x='Volatility', y='Returns', hue='Cluster')
+        sns.scatterplot(data=self.cluster_df, x='Volatility', y='Returns', hue='Cluster')
         ax.set_title('Cluster plot')
         ax.set_ylabel('Returns')
         ax.set_xlabel('Volatility')

@@ -21,8 +21,12 @@ class Portfolio:
         self.stock_list = [stock if stock.endswith('.NS') else f'{stock}.NS' for stock in self.stock_list]
         
         data = pdr.get_data_yahoo(self.stock_list, start = self.__start_date, end=self.__end_date, max_retries=1)['Close']
+        # Dropping stocks which have null values in their close columns
+        data.dropna(axis=1, inplace=True)
         
+        self.stock_list = data.columns
         weightage = 1/len(self.stock_list)
+        
         returns_list = []
         
         for stock in self.stock_list:
@@ -37,7 +41,8 @@ class Portfolio:
         save_path = 'Data'
         if save:
             os.makedirs(save_path, exist_ok=True)
-            data.to_csv(os.path.join(save_path, f'stock_{len(os.listdir(save_path))+1}.csv'), index=False)
+            version = len(os.listdir(save_path)) + 1 
+            data.to_csv(os.path.join(save_path, f'stock_{version}.csv'), index=False)
         
         self.summary_df = pd.DataFrame()
         stocknames = []
@@ -65,14 +70,59 @@ class Portfolio:
         beta = np.polyfit(x=mkt_returns, y=portfolio_returns, deg=1)[0]
         excess_returns = portfolio_returns.mean() - beta*(mkt_returns.mean() - rf)
         return beta, excess_returns
+    
+    def __monte_carlo(self, nsim=1000, save_weights=True):
+        nstocks = len(self.stock_list)
+        weights = np.random.random(size=(nsim, nstocks))
+        df = self.returns_df.drop(['PortfolioReturns'], axis=1).copy()
+        
+        weights_new = []
+        for weight in weights:
+            exp = np.exp(weight)
+            expsum = np.sum(exp)
+            weights_new.append(exp/expsum)
+                   
+        sim = np.matmul(weights_new, df.transpose().values)
+        sim = pd.DataFrame(sim)
+        sim = sim.transpose()
+        sim.columns = [f'sim_{i}' for i in range(1, nsim+1)]
+        weight_dict = {}
+        for i in range(nsim):
+            weight_dict[f'sim_{i+1}'] = weights[i]
+        
+        summary_df = pd.DataFrame({
+            'Returns':sim.mean(),
+            'Volatility':sim.std()
+        })
+        
+        summary_df.reset_index(inplace=True)
+        summary_df.rename(columns={'index':'Simulation'}, inplace=True)
+        
+        weight_df = pd.DataFrame(weight_dict).transpose()
+        weight_df.columns = df.columns
+        weight_df.reset_index().rename(columns={'index':'Simulation'}, inplace=True)
+        
+        if save_weights:
+            save_path = os.path.join('Data', 'weights')
+            os.makedirs(save_path, exist_ok=True)
+            version = len(os.listdir()) + 1
+            weight_df.to_csv(os.path.join(save_path, f'weights_{version}.csv'), index=False)
+        return summary_df
      
-    def see_frontier(self):
+    def see_frontier(self, monte_carlo=True):
+        if monte_carlo:
+            df = self.__monte_carlo().copy()
+            col = 'Simulation'
+        else:
+            df = self.summary_df.copy()
+            col = 'Symbol'
+        
         _, ax = plt.subplots(figsize=(16,6))
-        ax.scatter(self.summary_df['Volatility'], self.summary_df['Returns'])
-        min_risk_idx = self.summary_df['Volatility'].idxmin()
-        stock_name = self.summary_df.loc[min_risk_idx]['Symbol']
-        stock_return = self.summary_df.loc[min_risk_idx]['Returns']
-        stock_volatility = self.summary_df.loc[min_risk_idx]['Volatility']
+        ax.scatter(df['Volatility'], df['Returns'])
+        min_risk_idx = df['Volatility'].idxmin()
+        stock_name = df.loc[min_risk_idx][col]
+        stock_return = df.loc[min_risk_idx]['Returns']
+        stock_volatility = df.loc[min_risk_idx]['Volatility']
         ax.axhline(y=stock_return, ls='--', label=f'Return -> {stock_return:.3%}', color='blue')
         ax.axvline(x=stock_volatility, ls='--', label = f'Volatility -> {stock_volatility:.3%}', color='red')
         ax.set_xlabel('Volatility')
@@ -103,7 +153,7 @@ class Portfolio:
         return info
     
     def find_clusters(self):
-        X = self.summary_df[['Returns','Volatility']].dropna().values 
+        X = self.summary_df[['Returns','Volatility']].values 
         scaler = MinMaxScaler()
         X = scaler.fit_transform(X)
         inertia = []
@@ -120,8 +170,8 @@ class Portfolio:
         plt.show()
     
     def cluster(self,k):
-        X = self.summary_df[['Returns','Volatility']].dropna().values
-        self.cluster_df = self.summary_df.dropna().copy()
+        X = self.summary_df[['Returns','Volatility']].values
+        self.cluster_df = self.summary_df.copy()
         pipeline = Pipeline(steps=[
             ('Scaler', MinMaxScaler()),
             ('Clustering', KMeans(n_clusters=k))

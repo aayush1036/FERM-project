@@ -112,7 +112,7 @@ class Portfolio:
             weight_df.to_csv(os.path.join(save_path, f'weights_{version}.csv'), index=False)
         return summary_df
      
-    def see_frontier(self, monte_carlo=True):
+    def see_frontier(self, monte_carlo=True,ax=None):
         if monte_carlo:
             df = self.__monte_carlo().copy()
             col = 'Simulation'
@@ -120,7 +120,8 @@ class Portfolio:
             df = self.summary_df.copy()
             col = 'Symbol'
         
-        _, ax = plt.subplots(figsize=(16,6))
+        if ax is None:
+            _, ax = plt.subplots(figsize=(16,6))
         ax.scatter(df['Volatility'], df['Returns'])
         min_risk_idx = df['Volatility'].idxmin()
         stock_name = df.loc[min_risk_idx][col]
@@ -130,10 +131,8 @@ class Portfolio:
         ax.axvline(x=stock_volatility, ls='--', label = f'Volatility -> {stock_volatility:.3%}', color='red')
         ax.set_xlabel('Volatility')
         ax.set_ylabel('Returns')
-        ax.set_title(f'Efficient portfolio frontier (ideal portfolio = {stock_name})')
-        plt.legend()
-        plt.show()
-    
+        ax.set_title(f'ideal portfolio = {stock_name}')
+        ax.legend()    
     def describe(self, rf=0.06):
         portfolio_return = self.portfolio_returns.mean() 
         portfolio_volatility = self.portfolio_returns.std()
@@ -156,7 +155,7 @@ class Portfolio:
         print(tabulate(info, headers='keys'))
         return info
     
-    def find_clusters(self):
+    def find_clusters(self,ax=None):
         X = self.summary_df[['Returns','Volatility']].values 
         scaler = MinMaxScaler()
         X = scaler.fit_transform(X)
@@ -166,7 +165,8 @@ class Portfolio:
             model.fit(X)
             inertia.append(model.inertia_)
         inertia = np.array(inertia)
-        _, ax = plt.subplots(figsize=(16,6))
+        if ax is None:
+            _, ax = plt.subplots(figsize=(16,6))
         ax.plot(list(range(1,10)),inertia)
         ax.set_title('Deciding optimal number of clusters')
         ax.set_xlabel('Number of clusters')
@@ -185,10 +185,11 @@ class Portfolio:
         self.cluster_df['Cluster'] = preds 
         self.clustered = True 
         
-    def visualize_clusters(self):
+    def visualize_clusters(self, ax=None):
         if not self.clustered:
             raise NotImplementedError('Please cluster your data first')
-        _, ax = plt.subplots(figsize=(16,6))
+        if ax is None:
+            _, ax = plt.subplots(figsize=(16,6))
         sns.scatterplot(data=self.cluster_df, x='Volatility', y='Returns', hue='Cluster')
         ax.set_title('Cluster plot')
         ax.set_ylabel('Returns')

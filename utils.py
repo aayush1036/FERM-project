@@ -56,7 +56,7 @@ class Portfolio:
 
         print(f'Portfolio(stocks_path={os.path.abspath(stocks_path)}, period={period}, save={save})')
     
-    def __monte_carlo(self, nsim=1000, topn=20, save_weights=True):
+    def monte_carlo(self, nsim=1000, topn=20, save_weights=True):
         stocks = self.summary_df['Symbol'].tolist()[:topn]
         df = self.returns_df[stocks]
         weights = np.random.random(size=(topn, nsim))
@@ -83,7 +83,7 @@ class Portfolio:
      
     def see_frontier(self,ax=None):
         
-        df = self.__monte_carlo().copy()
+        df = self.monte_carlo().copy()
         if ax is None:
             _, ax = plt.subplots(figsize=(16,6))
         ax.scatter(df['Volatility'], df['Returns'])
